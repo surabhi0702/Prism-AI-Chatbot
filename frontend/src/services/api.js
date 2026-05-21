@@ -10,7 +10,9 @@ api.interceptors.response.use(
   (err) => {
     if (err.response?.status === 401) {
       localStorage.removeItem('prism-auth')
-      window.location.href = '/login'
+      localStorage.removeItem('prism-auth-admin')
+      const adminRoute = window.location.pathname.startsWith('/admin')
+      window.location.href = adminRoute ? '/login?role=admin' : '/login'
     }
     return Promise.reject(err)
   }
@@ -23,7 +25,7 @@ export const DISEASE_COLORS = {
   CA: { color: '#A78BFA', bg: 'rgba(167,139,250,0.12)', icon: '🎗', name: 'Cancer Care' },
   DM: { color: '#60A5FA', bg: 'rgba(96,165,250,0.12)',  icon: '🩺', name: 'Diabetes' },
   CV: { color: '#F472B6', bg: 'rgba(244,114,182,0.12)', icon: '❤️', name: 'Cardiovascular' },
-  MH: { color: '#34D399', bg: 'rgba(52,211,153,0.12)',  icon: '🧠', name: 'Mental Health' },
+  MH: { color: '#34D399', bg: 'rgba(52,211,153,0.12)',  icon: '🧠', name: 'Mental Illness' },
   RS: { color: '#F5C842', bg: 'rgba(245,200,66,0.12)',  icon: '🫁', name: 'Respiratory' },
 }
 

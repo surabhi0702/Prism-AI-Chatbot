@@ -12,8 +12,8 @@ from abc import ABC, abstractmethod
 from typing import List, Dict, Optional, Any
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
-from config.agent_registry import AgentDefinition, ALL_AGENTS
-from config.settings import get_settings
+from backend.config.agent_registry import AgentDefinition, ALL_AGENTS
+from backend.config.settings import get_settings
 
 settings = get_settings()
 
@@ -28,10 +28,18 @@ def get_llm(temperature: float = 0.2, max_tokens: int = 2048):
             anthropic_api_key=settings.anthropic_api_key,
             max_tokens=max_tokens,
         )
+    elif settings.llm_provider == "google":
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        return ChatGoogleGenerativeAI(
+            model=settings.llm_model or "gemini-1.5-flash",
+            temperature=temperature,
+            google_api_key=settings.google_api_key,
+            max_tokens=max_tokens,
+        )
     else:
         from langchain_openai import ChatOpenAI
         return ChatOpenAI(
-            model="gpt-4o",
+            model=settings.llm_model or "gpt-4o",
             temperature=temperature,
             openai_api_key=settings.openai_api_key,
             max_tokens=max_tokens,
@@ -429,3 +437,64 @@ def get_agent(agent_id: str) -> PRISMBaseAgent:
             raise ValueError(f"Unknown agent ID: {agent_id}")
         _agent_instances[agent_id] = cls()
     return _agent_instances[agent_id]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+def call_llm_sync(
+    system_prompt: str,
+    user_message:  str,
+    history:       List[Dict] = None,
+    temperature:   float = 0.2,
+    max_tokens:    int = 1000,
+) -> Dict:
+    """
+    Synchronous utility to call the configured LLM for one-off tasks 
+    like classification, enrichment, or analysis.
+    """
+    import time
+    t0 = time.time()
+    try:
+        # Use the factory to get the correctly configured LLM (Anthropic or OpenAI)
+        llm = get_llm(temperature=temperature, max_tokens=max_tokens)
+        
+        messages = [SystemMessage(content=system_prompt)]
+        
+        # Inject conversation history
+        for h in (history or []):
+            role = h.get("role")
+            content = h.get("content", "")
+            if role == "user": 
+                messages.append(HumanMessage(content=content))
+            elif role == "assistant": 
+                messages.append(AIMessage(content=content))
+            
+        messages.append(HumanMessage(content=user_message))
+        
+        # Invoke LLM
+        res = llm.invoke(messages)
+        
+        # Extract usage if available
+        p_tokens = getattr(res, "usage_metadata", {}).get("input_tokens", 0) if hasattr(res, "usage_metadata") else 0
+        c_tokens = getattr(res, "usage_metadata", {}).get("output_tokens", 0) if hasattr(res, "usage_metadata") else 0
+        
+        # Handle different response types from LangChain
+        response_text = res.content if hasattr(res, "content") else str(res)
+        
+        return {
+            "response":          response_text,
+            "prompt_tokens":     p_tokens,
+            "completion_tokens": c_tokens,
+            "latency_ms":        int((time.time() - t0) * 1000),
+            "success":           True,
+            "error":             None,
+        }
+    except Exception as e:
+        print(f"[LLM_ERROR] {str(e)}")
+        return {
+            "response":          f"I encountered an error processing the request. {str(e)[:100]}",
+            "prompt_tokens":     0,
+            "completion_tokens": 0,
+            "latency_ms":        int((time.time() - t0) * 1000),
+            "success":           False,
+            "error":             str(e),
+        }

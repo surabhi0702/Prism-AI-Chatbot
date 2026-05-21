@@ -2,22 +2,115 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  /* Default variables - Black & Pink */
+  --bg-main: #06080F;
+  --bg-card: #0F172A;
+  --accent: #ec4899;
+  --accent-glow: rgba(236, 72, 153, 0.2);
+  --text-main: #F1F5F9;
+  --text-dim: #94A3B8;
+  --border: rgba(255, 255, 255, 0.08);
+  --grad-primary: linear-gradient(to right, #ec4899, #6366f1);
+
+  /* Common component aliases */
+  --color-background-primary: var(--bg-main);
+  --color-background-secondary: var(--bg-card);
+  --color-text-primary: var(--text-main);
+  --color-text-secondary: var(--text-dim);
+  --color-text-tertiary: rgba(255, 255, 255, 0.5);
+  --color-border-tertiary: var(--border);
+  --color-text-info: var(--accent);
+  --success: #34D399;
+  --success-glow: rgba(52, 211, 153, 0.2);
+  --warning: #F5C842;
+  --warning-glow: rgba(245, 200, 66, 0.2);
+  --error: #F05252;
+  --error-glow: rgba(240, 82, 82, 0.2);
+}
+
+.theme-black-pink {
+  --bg-main: #06080F;
+  --bg-card: #0F172A;
+  --accent: #ec4899;
+  --accent-glow: rgba(236, 72, 153, 0.2);
+  --grad-primary: linear-gradient(to right, #db2777, #4f46e5);
+}
+
+.theme-titanium-gold {
+  --bg-main: #0A0F1C;
+  --bg-card: #151921;
+  --accent: #D4AF37;
+  --accent-glow: rgba(212, 175, 55, 0.2);
+  --grad-primary: linear-gradient(to right, #D4AF37, #94A3B8);
+}
+
+.theme-neural-glass {
+  --bg-main: #0F172A;
+  --bg-card: rgba(30, 41, 59, 0.6);
+  --accent: #22D3EE;
+  --accent-glow: rgba(34, 211, 238, 0.2);
+  --grad-primary: linear-gradient(to right, #22D3EE, #8B5CF6);
+}
+
 @layer base {
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  html { scroll-behavior: smooth; }
-  body { background: #060810; color: #DDE3F5; font-family: 'DM Sans', sans-serif; min-height: 100vh; }
-  ::-webkit-scrollbar { width: 4px; height: 4px; }
-  ::-webkit-scrollbar-thumb { background: #2A3055; border-radius: 2px; }
-  ::-webkit-scrollbar-track { background: transparent; }
+  body {
+    @apply bg-[var(--bg-main)] text-[var(--text-main)] font-sans antialiased transition-all duration-500;
+    background-color: var(--bg-main) !important;
+    color: var(--text-main);
+  }
 }
 
 @layer components {
-  .card { @apply bg-bg2 border border-line rounded-2xl; }
-  .btn-primary { @apply bg-gradient-to-r from-gold to-ora text-void font-bold rounded-xl px-5 py-2.5 text-sm font-disp transition-all hover:shadow-lg hover:shadow-gold/20 hover:-translate-y-0.5 active:translate-y-0; }
-  .btn-ghost { @apply bg-bg3 border border-line2 text-ink2 rounded-xl px-4 py-2 text-sm font-medium transition-all hover:bg-bg4 hover:text-ink; }
-  .input { @apply bg-bg3 border border-line2 rounded-xl px-4 py-2.5 text-ink text-sm outline-none transition-all focus:border-gold focus:ring-2 focus:ring-gold/10 placeholder:text-ink3; }
-  .badge { @apply inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-mono font-semibold; }
+  .card-admin {
+    @apply bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-6 transition-all;
+  }
+  .card-admin:hover {
+    border-color: var(--accent);
+  }
+  .card-patient {
+    @apply bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl p-6 transition-all;
+  }
+  .card-patient:hover {
+    border-color: var(--accent);
+  }
+  .input-admin {
+    @apply bg-void border border-line rounded-lg px-4 py-2 text-sm text-ink outline-none;
+  }
+  .input-admin:focus {
+    border-color: var(--accent);
+  }
+  .input {
+    @apply bg-bg1 border border-line rounded-xl px-4 py-2.5 text-sm text-ink outline-none transition-all;
+    background-color: var(--bg-card);
+    color: var(--text-main);
+  }
+  .input:focus {
+    border-color: var(--accent);
+    @apply ring-2 ring-[var(--accent-glow)];
+  }
+  .input::placeholder {
+    @apply text-ink3 opacity-40;
+  }
+  .card {
+    @apply bg-[var(--bg-card)] border border-[var(--border)] rounded-2xl transition-all;
+  }
 }
 
-.animate-pulse-slow { animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite; }
-.noise { background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.04'/%3E%3C/svg%3E"); }
+/* Global utility overrides to follow theme variables */
+.bg-void { background-color: var(--bg-main); }
+.bg-bg1 { background-color: var(--bg-card); }
+.bg-bg2 { background-color: var(--bg-card); }
+.bg-bg3 { background-color: var(--bg-card); opacity: 0.8; }
+.border-line { border-color: var(--border); }
+.text-ink { color: var(--text-main); }
+.text-ink2 { color: var(--text-dim); }
+.text-ink3 { color: var(--text-dim); opacity: 0.8; }
+.text-gold { color: var(--accent); }
+.text-teal { color: #2DD4BF; }
+.text-silver { color: #94A3B8; }
+.text-red { color: #F05252; }
+.bg-goldL { background-color: var(--accent-glow); }
+.text-white { color: var(--text-main); }
+.text-gray-400 { color: var(--text-dim); }
+.text-gray-500 { color: var(--text-dim); opacity: 0.7; }

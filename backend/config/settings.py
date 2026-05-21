@@ -17,16 +17,17 @@ class Settings(BaseSettings):
     # LLM
     anthropic_api_key: str = ""
     openai_api_key: str = ""
+    google_api_key: str = ""
     llm_provider: str = "anthropic"
     llm_model: str = "claude-sonnet-4-5"
 
     # Database
-    database_url: str = "postgresql+asyncpg://prism_user:prism_pass@localhost:5432/prism_db"
-    redis_url: str = "redis://localhost:6379/0"
+    database_url: str = "postgresql+asyncpg://prism_user:prism_pass@127.0.0.1:5432/prism_db"
+    redis_url: str = "redis://127.0.0.1:6379/0"
 
     # Vector store
     chroma_persist_dir: str = "./data/chroma_db"
-    chroma_host: str = "localhost"
+    chroma_host: str = "127.0.0.1"
     chroma_port: int = 8001
 
     # Auth
@@ -43,7 +44,7 @@ class Settings(BaseSettings):
     human_frustration_threshold: int = 75
     max_chat_history: int = 20
     top_k_initial: int = 10
-    top_k_final: int = 5
+    top_k_final: int = 10
 
     # Multilingual
     supported_languages: str = "en,hi,te,es,pa"
@@ -55,7 +56,7 @@ class Settings(BaseSettings):
     max_upload_mb: int = 25
 
     # CORS
-    allowed_origins: str = "http://localhost:5173,http://localhost:5174"
+    allowed_origins: str = "http://localhost:5173,http://localhost:5174,http://localhost:5177,http://localhost:5178,http://127.0.0.1:5177,http://127.0.0.1:5178"
 
     # Env
     environment: str = "development"

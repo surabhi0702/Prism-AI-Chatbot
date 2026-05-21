@@ -8,5 +8,6 @@
   "editor.wordWrap": "on",
   "files.exclude": { "**/__pycache__": true, "**/.venv": true, "**/node_modules": true, "**/data/chroma_db": true },
   "editor.fontFamily": "'Fira Code', Consolas, monospace",
-  "editor.fontLigatures": true
+  "editor.fontLigatures": true,
+  "git.ignoreLimitWarning": true
 }

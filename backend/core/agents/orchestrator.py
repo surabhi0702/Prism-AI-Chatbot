@@ -7,21 +7,20 @@ Flow: detect_language → translate → pre_check → retrieve → primary_agent
 import re
 import time
 import json
-from typing import TypedDict, Annotated, List, Dict, Optional, Any
+from typing import TypedDict, Annotated, List, Dict, Optional, Any, Tuple
 from datetime import datetime
 
 from langgraph.graph import StateGraph, END
 from langgraph.graph.message import add_messages
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 
-from config.settings import get_settings
-from config.disease_config import AGENTS, DISEASE_DOMAINS
-from core.rag.pipeline import get_rag_pipeline
-from core.multilingual.translator import PRISMTranslator
-from core.quality.response_quality import ResponseQualityScorer
+from backend.config.settings import get_settings
+from backend.config.disease_config import AGENTS, DISEASE_DOMAINS
+from backend.core.rag.pipeline import get_rag_pipeline
+from backend.core.multilingual.translator import translate_text, translate_response as ml_translate_response
+from backend.core.quality.response_quality import ResponseQualityScorer
 
 settings = get_settings()
-translator = PRISMTranslator()
 quality_scorer = ResponseQualityScorer()
 
 
@@ -60,6 +59,7 @@ class PRISMState(TypedDict):
     needs_specialist: bool
     needs_human:      bool
     escalated_to:     str
+    trigger_log:      List[str]  # New: tracks why escalation happened
 
     # Meta
     processing_steps: List[str]
@@ -107,7 +107,7 @@ def translate_to_english_node(state: PRISMState) -> PRISMState:
     msg  = state["user_message"]
     if lang != "en":
         try:
-            msg = translator.translate(msg, src=lang, tgt="en")
+            msg = translate_text(msg, src=lang, tgt="en")
         except Exception:
             pass
     return {**state,
@@ -127,8 +127,8 @@ def retrieve_context_node(state: PRISMState) -> PRISMState:
 
     chunks = pipeline.retrieve(
         query, collection,
-        top_k_initial=settings.top_k_initial,
-        top_k_final=settings.top_k_final,
+        top_k_initial=10, # Force top 10 for best-in-class reranking
+        top_k_final=10,   # Use all 10 reranked chunks for response coherence
     )
 
     context_parts = []
@@ -199,18 +199,24 @@ def score_confidence_node(state: PRISMState) -> PRISMState:
     query    = state.get("english_message", state["user_message"])
     chunks   = state.get("retrieved_chunks", [])
 
-    # Heuristic confidence scoring (replace with RAGAS in production)
+    # Heuristic confidence scoring
     conf = _compute_confidence(query, response, chunks)
-    frust = _compute_frustration(query, state.get("messages", []))
+    frust, triggers = _compute_frustration(query, state.get("messages", []))
 
-    needs_spec  = conf < settings.specialist_confidence_threshold
-    needs_human = frust > settings.human_frustration_threshold
+    needs_spec  = conf < 0.70 # Precise threshold as requested
+    needs_human = frust > 75  # Precise threshold as requested
+
+    log = []
+    if needs_spec: log.append(f"Low confidence score ({int(conf*100)}%) — Specialist required")
+    if needs_human: log.append(f"High frustration score ({frust}%) — Escalating to human care coordinator")
+    for t in triggers: log.append(t)
 
     return {**state,
             "confidence":       conf,
             "frustration":      frust,
             "needs_specialist": needs_spec,
             "needs_human":      needs_human,
+            "trigger_log":      log,
             "processing_steps": state.get("processing_steps", []) + ["score_confidence"]}
 
 
@@ -323,7 +329,7 @@ def translate_response_node(state: PRISMState) -> PRISMState:
     response = state.get("final_response", "")
     if lang != "en":
         try:
-            response = translator.translate(response, src="en", tgt=lang)
+            response = ml_translate_response(response, lang)
         except Exception:
             pass
     return {**state,
@@ -438,6 +444,7 @@ class PRISMOrchestrator:
             "response":         result.get("translated_response") or result.get("final_response", ""),
             "confidence":       result.get("confidence", 0.0),
             "frustration":      result.get("frustration", 0),
+            "trigger_log":      result.get("trigger_log", []),
             "escalated_to":     result.get("escalated_to", "none"),
             "citations":        result.get("citations", []),
             "ragas_scores":     result.get("ragas_scores", {}),
@@ -484,21 +491,43 @@ def _compute_confidence(query: str, response: str, chunks: List[Dict]) -> float:
     return round(min(max(conf, 0.1), 1.0), 3)
 
 
-def _compute_frustration(message: str, history: List) -> int:
+def _compute_frustration(message: str, history: List) -> Tuple[int, List[str]]:
     frustration_signals = [
         "frustrated","angry","useless","terrible","worst","hopeless","give up",
         "doesn't work","not helpful","waste","tired of","fed up","sick of",
         "cansado","frustrado","inútil","horrible","rendirse","harto",
+        "rubbish", "ridiculous", "are you mad", "stupid", "dumb", "idiot",
+        "wrong information", "lying", "basura", "ridículo", "estás loco"
     ]
     score = 0
+    triggers = []
     msg_l = message.lower()
+
+    # Keyword check
+    keywords_found = []
     for sig in frustration_signals:
         if sig in msg_l:
-            score += 20
-    # Repetition: if same/similar question in history
+            score += 25
+            keywords_found.append(sig)
+
+    if keywords_found:
+        triggers.append(f"Frustration keywords detected: '{', '.join(keywords_found[:3])}'")
+
+    # Repetition check: if same/similar question in history
     if len(history) >= 4:
-        score += 15
-    return min(score, 100)
+        last_msgs = [m.content.lower() for m in history if hasattr(m, "content")][-3:]
+        if len(set(last_msgs)) < len(last_msgs):
+            score += 30
+            triggers.append("Repeated concern — same issue stated multiple times")
+
+    # Explicit request for human
+    human_req = ["speak to human", "real doctor", "human agent", "talk to someone", "persona real"]
+    for hr in human_req:
+        if hr in msg_l:
+            score += 50
+            triggers.append("Explicit request: 'speak to a REAL person'")
+
+    return min(score, 100), triggers
 
 
 # Shared singleton

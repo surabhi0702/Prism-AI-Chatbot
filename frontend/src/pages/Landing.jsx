@@ -38,7 +38,7 @@ export default function Landing() {
         <div className="absolute inset-0 bg-gradient-radial from-gold/5 via-transparent to-transparent pointer-events-none" />
         <div className="inline-flex items-center gap-2 bg-goldL border border-gold/20 px-4 py-1.5 rounded-full text-gold text-xs font-mono font-semibold mb-6">
           <div className="w-1.5 h-1.5 rounded-full bg-gold animate-pulse" />
-          AI-Powered Telemedicine Platform
+          AI-Powered Tele Medicine Platform
         </div>
         <h1 className="font-disp font-bold text-5xl md:text-7xl mb-6 leading-tight">
           Your AI Health <br />

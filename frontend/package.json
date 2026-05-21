@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "node node_modules/vite/bin/vite.js --port 5173",
-    "admin": "node node_modules/vite/bin/vite.js --port 5174 --mode admin",
+    "dev": "node node_modules/vite/bin/vite.js --port 5177",
+    "admin": "node node_modules/vite/bin/vite.js --port 5178 --mode admin",
     "build": "node node_modules/vite/bin/vite.js build",
     "preview": "node node_modules/vite/bin/vite.js preview"
   },

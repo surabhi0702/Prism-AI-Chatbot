@@ -12,10 +12,10 @@ export const useAuthStore = create(
         const { data } = await api.post('/auth/token', { email, password })
         api.defaults.headers.common['Authorization'] = `Bearer ${data.token}`
         set({ user: data.user, token: data.token })
-        return data.user
+        return { user: data.user, warning: data.warning }
       },
-      register: async (email, name, password, language = 'en') => {
-        const { data } = await api.post('/auth/register', { email, name, password, language })
+      register: async (email, name, password, country = 'USA') => {
+        const { data } = await api.post('/auth/register', { email, name, password, country })
         api.defaults.headers.common['Authorization'] = `Bearer ${data.token}`
         set({ user: data.user, token: data.token })
         return data.user
@@ -30,6 +30,9 @@ export const useAuthStore = create(
         if (token) api.defaults.headers.common['Authorization'] = `Bearer ${token}`
       },
     }),
-    { name: 'prism-auth', partialize: (s) => ({ token: s.token, user: s.user }) }
+    { 
+      name: import.meta.env.MODE === 'admin' ? 'prism-auth-admin' : 'prism-auth', 
+      partialize: (s) => ({ token: s.token, user: s.user }) 
+    }
   )
 )

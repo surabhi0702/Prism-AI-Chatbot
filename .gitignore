@@ -1,11 +1,57 @@
-node_modules/
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+
+# Environment
 .env*
 
-logs
-.log
+# Logs
+logs/
+*.log
+*.log.*
+logs_db.txt
+import_trace.txt
+backend_debug.log
+backend_log.txt
+backend_output.log
+backend_output_root.log
+check_db_output*.txt
+debug_output*.txt
+error_report.txt
+users_list.txt
+
+# Database files
+*.db
+*.sqlite3
+data/
+
+# Node
+node_modules/
 npm-debug.log
 yarn-debug.log*
 yarn-error.log*
 
+# Build
 dist/
 build/
+
+# Test / scratch / debug scripts
+test_*.py
+check_db*.py
+fix_*.py
+backend_debug.py
+force_backfill.py
+backfill_prerag.py
+capture_error.py
+scratch/
+backend/scratch/
+backend/scripts/
+
+# Misc
+test.pdf
+test.pdf
+*.txt
+!README.md

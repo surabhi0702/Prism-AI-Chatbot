@@ -6,10 +6,10 @@ import asyncio
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'backend'))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from database.models import create_tables, AsyncSession, User, SystemAlert
-from middleware.auth import hash_password
+from backend.database.models import create_tables, AsyncSession, User, SystemAlert
+from backend.middleware.auth import hash_password
 import uuid
 from datetime import datetime
 
@@ -27,14 +27,14 @@ DEMO_ALERTS = [
 
 
 async def main():
-    print("🔧 PRISM Database Setup")
+    print("[SETUP] PRISM Database Setup")
     print("=" * 40)
 
-    print("📦 Creating database tables…")
+    print("[INFO] Creating database tables...")
     await create_tables()
-    print("✅ Tables created")
+    print("[SUCCESS] Tables created")
 
-    print("👤 Seeding demo users…")
+    print("[INFO] Seeding demo users...")
     async with AsyncSession() as session:
         for u in DEMO_USERS:
             from sqlalchemy import select
@@ -48,16 +48,20 @@ async def main():
                     subscribed_diseases=u["diseases"],
                 )
                 session.add(user)
-                print(f"  ✓ {u['email']} ({u['role']})")
+                print(f"  [OK] {u['email']} ({u['role']})")
             else:
-                print(f"  ⏭  {u['email']} already exists")
+                if u["role"] == "admin" and existing.role != "admin":
+                    existing.role = "admin"
+                    print(f"  [FIX] {u['email']} role corrected to admin")
+                else:
+                    print(f"  [SKIP] {u['email']} already exists")
 
         for a in DEMO_ALERTS:
             session.add(SystemAlert(id=str(uuid.uuid4()), **a))
 
         await session.commit()
 
-    print("\n✅ Database setup complete!")
+    print("\n[SUCCESS] Database setup complete!")
     print("\nDemo accounts:")
     print("  Admin:   admin@prism.ai    / admin123")
     print("  Patient: patient@prism.ai  / demo123")

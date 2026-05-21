@@ -3,7 +3,7 @@ import asyncio, time
 from typing import List, Dict, Optional
 import requests
 from bs4 import BeautifulSoup
-from config.settings import get_settings
+from backend.config.settings import get_settings
 
 settings = get_settings()
 PUBMED_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
@@ -21,6 +21,7 @@ class PubMedCrawler:
             ids = r.json().get("esearchresult", {}).get("idlist", [])
             return self._fetch_abstracts(ids)
         except Exception as e:
+            print(f"[PubMed] Search Error: {e}")
             return []
 
     def _fetch_abstracts(self, pmids: List[str]) -> List[Dict]:
@@ -51,7 +52,8 @@ class PubMedCrawler:
                     "doc_type": "pubmed_abstract",
                 })
             return articles
-        except Exception:
+        except Exception as e:
+            print(f"[PubMed] Fetch Error: {e}")
             return []
 
 
