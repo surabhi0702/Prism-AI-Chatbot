@@ -9,7 +9,7 @@ services:
       POSTGRES_USER: prism_user
       POSTGRES_PASSWORD: prism_pass
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -17,6 +17,19 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@prism.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "5050:80"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+    depends_on:
+      - postgres
 
   redis:
     image: redis:7-alpine
@@ -43,3 +56,4 @@ volumes:
   postgres_data:
   redis_data:
   chroma_data:
+  pgadmin_data:

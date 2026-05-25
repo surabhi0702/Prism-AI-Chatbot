@@ -14,8 +14,15 @@ from pathlib import Path
 ROOT    = Path(__file__).parent
 BACKEND = ROOT / "backend"
 FRONTEND= ROOT / "frontend"
+VENV_PYTHON = BACKEND / ".venv" / "Scripts" / "python.exe"
 
 processes = []
+
+def python_exe() -> str:
+    """Prefer the project venv so FastAPI/uvicorn deps are available."""
+    if VENV_PYTHON.exists():
+        return str(VENV_PYTHON)
+    return sys.executable
 
 def print_banner():
     print("""
@@ -62,11 +69,14 @@ def check_node():
 
 def check_python_deps():
     try:
-        import fastapi, uvicorn, langchain
+        subprocess.run(
+            [python_exe(), "-c", "import fastapi, uvicorn, langchain"],
+            cwd=ROOT, check=True, capture_output=True,
+        )
         return True
-    except ImportError as e:
+    except (ImportError, subprocess.CalledProcessError) as e:
         print(f"[WARN] Missing Python deps: {e}")
-        print(f"   Run: cd backend && pip install -r requirements.txt")
+        print("   Run: backend\\.venv\\Scripts\\pip install -r backend\\requirements.txt")
         return False
 
 def install_frontend():
@@ -86,7 +96,7 @@ def start_backend():
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT)
     proc = subprocess.Popen(
-        [sys.executable, "-m", "uvicorn", "backend.main:app", "--reload", "--host", "127.0.0.1", "--port", "8000"],
+        [python_exe(), "-m", "uvicorn", "backend.main:app", "--reload", "--host", "127.0.0.1", "--port", "8000"],
         cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=env,
     )
     processes.append(proc)

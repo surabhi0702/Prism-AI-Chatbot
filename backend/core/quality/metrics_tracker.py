@@ -110,24 +110,38 @@ class MetricsTracker:
         route:           str,   # "primary" | "specialist" | "human"
         disease_code:    str,
     ) -> None:
-        from backend.database.models import SystemAlert
+        from backend.database.models import SystemAlert, LLMCallLog
 
+        payload = {
+            "agent_id":          agent_id,
+            "conversation_id":   conversation_id,
+            "model":             model,
+            "prompt_tokens":     prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens":      prompt_tokens + completion_tokens,
+            "processing_ms":     processing_ms,
+            "route":             route,
+            "disease_code":      disease_code,
+        }
         self.db.add(SystemAlert(
             id=str(uuid.uuid4()),
             level="info",
             title=f"LLM call: {agent_id} [{route}]",
-            message=json.dumps({
-                "agent_id":          agent_id,
-                "conversation_id":   conversation_id,
-                "model":             model,
-                "prompt_tokens":     prompt_tokens,
-                "completion_tokens": completion_tokens,
-                "total_tokens":      prompt_tokens + completion_tokens,
-                "processing_ms":     processing_ms,
-                "route":             route,
-                "disease_code":      disease_code,
-            }),
+            message=json.dumps(payload),
             component="llm_call",
+            created_at=datetime.utcnow(),
+        ))
+        self.db.add(LLMCallLog(
+            id=str(uuid.uuid4()),
+            conversation_id=conversation_id,
+            agent_id=agent_id,
+            model=model,
+            provider=model.split("-")[0] if model else "unknown",
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+            latency_ms=processing_ms,
+            success=True,
             created_at=datetime.utcnow(),
         ))
 
@@ -222,6 +236,7 @@ class MetricsTracker:
         escalation_active: bool,
         escalation_reason: str,
         llm_calls:         Optional[List[Dict]] = None,
+        projected_quality: Optional[float] = None,
     ) -> None:
         """
         Single entry point. Call this once after every AI response.
@@ -229,12 +244,18 @@ class MetricsTracker:
         All writes are batched — caller does db.commit() once.
         """
         # 1. RAGAS metrics (Faithfulness, Relevancy, Confidence, Frustration etc.)
+        scores = dict(ragas_scores or {})
+        if projected_quality is not None:
+            scores["projected_conversation_quality"] = round(projected_quality / 100.0, 4)
+            if not scores.get("overall"):
+                scores["overall"] = round(projected_quality / 100.0, 4)
+
         await self.record_ragas(
             message_id=message_id,
             conversation_id=conversation_id,
             agent_id=agent_id,
             disease_code=disease_code,
-            ragas_scores=ragas_scores,
+            ragas_scores=scores,
             confidence=confidence,
             frustration=frustration,
             processing_ms=processing_ms,

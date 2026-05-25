@@ -215,6 +215,8 @@ function Overview({ data, llmcalls, ragas, userQuerySources }) {
                      : health?.overall === 'Degraded' ? 'var(--warning)'
                      : 'var(--error)'
 
+  const metricValue = (v) => (v === null || v === undefined ? '—' : v)
+
   const getRagasComposite = () => {
     const rows = (ragas || [])
     const exist = rows.filter(r => r.overall !== undefined || r.overall_score !== undefined)
@@ -222,13 +224,21 @@ function Overview({ data, llmcalls, ragas, userQuerySources }) {
       const total = exist.reduce((s, r) => s + (r.overall || r.overall_score || 0), 0)
       return (total / exist.length * 100).toFixed(1)
     }
-    return "0.0"
+    const overall = data?.ragas?.overall
+    if (overall != null && !Number.isNaN(Number(overall))) {
+      return (Number(overall) * 100).toFixed(1)
+    }
+    return '0.0'
   }
 
+  const patientCount = data?.patients ?? data?.users
+  const llmCount = data?.llm_calls ?? (Array.isArray(llmcalls) ? llmcalls.length : undefined)
+  const activeSessions = data?.active_sessions ?? data?.conversations
+
   const coreMetrics = [
-    { label: 'Total Patients', value: data?.users ?? '—', color: 'var(--accent)', icon: <Users size={14} />, sub: 'Registered', tip: METRIC_DESCS.patients },
-    { label: 'LLM Interactions', value: data?.llm_calls ?? '—', color: '#F472B6', icon: <Zap size={14} />, sub: 'Total Calls', tip: "Total number of successful AI-patient interactions across all agents." },
-    { label: 'Active Sessions', value: data?.conversations ? (data.conversations / 2).toFixed(0) : '—', color: '#A78BFA', icon: <MessageSquare size={14} />, sub: 'This Week', tip: METRIC_DESCS.sessions },
+    { label: 'Total Patients', value: metricValue(patientCount), color: 'var(--accent)', icon: <Users size={14} />, sub: 'Registered', tip: METRIC_DESCS.patients },
+    { label: 'LLM Interactions', value: metricValue(llmCount), color: '#F472B6', icon: <Zap size={14} />, sub: 'Total Calls', tip: "Total number of successful AI-patient interactions across all agents." },
+    { label: 'Active Sessions', value: metricValue(activeSessions), color: '#A78BFA', icon: <MessageSquare size={14} />, sub: 'This Week', tip: METRIC_DESCS.sessions },
     { label: 'RAGAS Composite', value: `${getRagasComposite()}%`, color: '#34D399', icon: <TrendingUp size={14} />, sub: 'Overall Quality', tip: METRIC_DESCS.composite },
   ]
 
@@ -2315,7 +2325,7 @@ function Documents({ data }) {
 
 // ── Main admin portal ──────────────────────────────────────────────────────
 export default function AdminPortal() {
-  const { logout } = useAuthStore()
+  const { logout, token, hydrate } = useAuthStore()
   const navigate   = useNavigate()
   const [active, setActive]   = useState('overview')
   const [overview, setOv]     = useState(null)
@@ -2374,7 +2384,10 @@ export default function AdminPortal() {
     } finally { setLoading(false) }
   }
 
-  useEffect(() => { loadAll() }, [])
+  useEffect(() => { hydrate() }, [hydrate])
+  useEffect(() => {
+    if (token) loadAll()
+  }, [token])
 
   const resolveAlert = async (id) => {
     try { await api.put(`/admin/alerts/${id}/resolve`); setAlerts(a => a.filter(x => x.id !== id)); toast.success('Alert resolved') }

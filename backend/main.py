@@ -14,6 +14,7 @@ from backend.core.multimodal.video_generator  import generate_medical_video
 from backend.core.quality.quality_metrics import (
     compute_quality_for_patient,
     compute_quality_for_all_patients,
+    compute_admin_quality_summary,
 )
 
 from backend.core.conversation.response_engine import (
@@ -641,7 +642,16 @@ async def chat(
         select(Message).where(Message.conversation_id == conv.id)
         .order_by(Message.created_at).limit(30)
     )
-    history = [{"role": m.role, "content": m.content} for m in hist_res.scalars().all()]
+    history = [
+        {
+            "role": m.role,
+            "content": m.content,
+            "ragas_scores": m.ragas_scores or {},
+            "frustration": m.frustration,
+            "confidence": m.confidence,
+        }
+        for m in hist_res.scalars().all()
+    ]
 
     # User info
     user_res = await db.execute(select(User).where(User.id == user_id))
@@ -731,6 +741,21 @@ async def chat(
                        content=final_question, agent_id=agent_id, is_clarifying_question=True))
         conv.total_messages = (conv.total_messages or 0) + 2
         conv.meta_json = meta
+
+        from backend.core.conversation.response_engine import compute_conversation_quality
+        q_quality = compute_conversation_quality(
+            conversation_history=history,
+            slots_filled=conv_result.get("slots_filled", {}),
+            intent=conv_result.get("intent", "GENERAL_WELLBEING"),
+            format_used="clarifying",
+            memory_dict=meta.get("response_state") or {},
+        )
+        meta["projected_quality"] = {
+            "score": q_quality["projected_score"],
+            "recommendation": q_quality["recommendation"],
+            "updated_at": datetime.utcnow().isoformat(),
+        }
+        conv.meta_json = meta
         await db.commit()
 
         return {
@@ -745,6 +770,8 @@ async def chat(
             "follow_up_questions": [],    # No follow-ups during clarification
             "latency_ms":      int((time.time() - t0) * 1000),
             "selected_language": effective_lang,
+            "quality_score": q_quality["projected_score"],
+            "quality_recommendation": q_quality["recommendation"],
         }
 
     # ── Full answer branch ────────────────────────────────────────────────────
@@ -920,7 +947,15 @@ async def chat(
         intent=intent,
         format_used=format_used,
         memory_dict=updated_memory,
+        current_ragas=routing_result.get("ragas_scores"),
+        current_frustration=routing_result.get("frustration_score"),
+        current_confidence=actual_confidence,
     )
+    meta["projected_quality"] = {
+        "score": quality["projected_score"],
+        "recommendation": quality["recommendation"],
+        "updated_at": datetime.utcnow().isoformat(),
+    }
 
     # ── Translate response to patient's language ───────────────────────────────
     multilang_resp = await loop.run_in_executor(
@@ -1071,6 +1106,7 @@ async def chat(
         escalation_active=routing_result["escalation_active"],
         escalation_reason=routing_result.get("escalation_reason", "Threshold exceeded"),
         llm_calls=routing_result.get("llm_calls", []),
+        projected_quality=quality.get("projected_score"),
     )
 
     await db.commit()
@@ -1482,6 +1518,8 @@ async def voice_chat(
     voice_result["route_decision"] = chat_response.get("route_decision")
     voice_result["confidence"] = chat_response.get("confidence")
     voice_result["responded_by"] = chat_response.get("responded_by")
+    voice_result["quality_score"] = chat_response.get("quality_score")
+    voice_result["quality_recommendation"] = chat_response.get("quality_recommendation")
     
     # 3. Optional Server-side TTS (if requested and browser synthesis is not preferred)
     if tts_enabled.lower() == "true":
@@ -1969,10 +2007,24 @@ async def feedback(req: FeedbackRequest, current: dict = Depends(get_current_use
 # ═══════════════════════════════════════════════════════════════════════════
 @app.get("/api/admin/overview")
 async def admin_overview(current: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    users_count  = (await db.execute(func.count(User.id))).scalar()
-    conv_count   = (await db.execute(func.count(Conversation.id))).scalar()
-    msg_count    = (await db.execute(func.count(Message.id))).scalar()
-    doc_count    = (await db.execute(func.count(IndexedDocument.id))).scalar()
+    from datetime import timedelta
+
+    users_count = (await db.execute(select(func.count(User.id)))).scalar() or 0
+    patients_count = (await db.execute(
+        select(func.count(User.id)).where(User.role == "patient")
+    )).scalar() or 0
+    conv_count = (await db.execute(select(func.count(Conversation.id)))).scalar() or 0
+    msg_count = (await db.execute(select(func.count(Message.id)))).scalar() or 0
+    doc_count = (await db.execute(select(func.count(IndexedDocument.id)))).scalar() or 0
+
+    cutoff = datetime.utcnow() - timedelta(days=7)
+    active_sessions = (await db.execute(
+        select(func.count(Conversation.id)).where(Conversation.updated_at >= cutoff)
+    )).scalar() or 0
+
+    assistant_msgs = (await db.execute(
+        select(func.count(Message.id)).where(Message.role == "assistant")
+    )).scalar() or 0
 
     ragas_res = await db.execute(
         select(func.avg(RAGASMetric.faithfulness), func.avg(RAGASMetric.answer_relevancy),
@@ -1982,16 +2034,19 @@ async def admin_overview(current: dict = Depends(require_admin), db: AsyncSessio
     fb_res = await db.execute(func.avg(PatientFeedback.rating))
     avg_rating = fb_res.scalar() or 0
 
-    from backend.database.models import LLMCallLog
-    llm_count = (await db.execute(func.count(LLMCallLog.id))).scalar() or 0
+    llm_count = (await db.execute(select(func.count(LLMCallLog.id)))).scalar() or 0
+    llm_interactions = max(llm_count, assistant_msgs)
 
     return {
-        "users":         users_count or 0,
-        "conversations": conv_count or 0,
-        "messages":      msg_count or 0,
-        "documents":     doc_count or 0,
-        "llm_calls":     llm_count,
-        "avg_feedback":  round(float(avg_rating or 0), 2),
+        "users":           patients_count,
+        "patients":        patients_count,
+        "total_accounts":  users_count,
+        "conversations":   conv_count,
+        "active_sessions": active_sessions,
+        "messages":        msg_count,
+        "documents":       doc_count,
+        "llm_calls":       llm_interactions,
+        "avg_feedback":    round(float(avg_rating or 0), 2),
         "ragas": {
             "faithfulness":     round(float(ragas_row[0] or 0), 3),
             "answer_relevancy": round(float(ragas_row[1] or 0), 3),
@@ -2068,69 +2123,8 @@ async def admin_resolve_alert(alert_id: str, current: dict = Depends(require_adm
 
 @app.get("/api/admin/quality/summary")
 async def admin_quality_summary(days: int = 15, current: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-
-
-    # 5 Diseases, each with 6 unique or shared agents
-    disease_agents = {
-        "Diabetes Care (DM)": ["Endocrinology Specialist", "Diabetes Primary Care", "Diabetes Nurse", "Diabetes Dietitian", "Diabetes Educator", "Human Coordinator"],
-        "Cardiovascular (CV)": ["Cardiology Specialist", "CV Primary Care", "CV Nurse", "CV Technician", "Heart Health Coach", "Human Coordinator"],
-        "Cancer Care (CA)": ["Oncology Specialist", "Cancer Primary Care", "Oncology Nurse", "Radiology Specialist", "Patient Navigator", "Human Coordinator"],
-        "Mental Illness (MH)": ["Mental Health Specialist", "Psychiatric Nurse", "Therapist Agent", "MH Primary Care", "Support Group Coord", "Human Coordinator"],
-        "Respiratory (RS)": ["Asthma Specialist", "COPD Specialist", "Pulmonary Rehab Specialist", "Respiratory Nurse", "Sleep Apnea Specialist", "Human Coordinator"]
-    }
-    
-    import random
-    matrix = []
-    overall_E = 0; overall_R = 0; overall_C = 0; overall_S = 0; overall_F = 0; overall_V = 0
-    count = 0
-    
-    from datetime import datetime, timedelta
-    for i in range(days):
-        date_str = (datetime.utcnow() - timedelta(days=i)).strftime("%Y-%m-%d")
-        for d, agents in disease_agents.items():
-            for a in agents:
-                seed = sum(ord(c) for c in d+a) + i
-                random.seed(seed)
-                e = random.randint(75, 95)
-                r = random.randint(70, 98)
-                c = random.randint(80, 99)
-                s = random.randint(65, 90)
-                f = random.randint(60, 85)
-                v = random.randint(85, 98)
-                
-                cqs = (e * 0.30) + (r * 0.25) + (c * 0.20) + (s * 0.15) + (f * 0.07) + (v * 0.03)
-                
-                matrix.append({
-                    "date": date_str,
-                    "disease": d,
-                    "agent": a,
-                    "E": e,
-                    "R": r,
-                    "C": c,
-                    "S": s,
-                    "F": f,
-                    "V": v,
-                    "cqs": round(cqs, 1)
-                })
-                
-                if i == 0:
-                    overall_E += e; overall_R += r; overall_C += c; overall_S += s; overall_F += f; overall_V += v
-                    count += 1
-            
-    # Reset random to not affect other parts
-    random.seed()
-    
-    return {
-        "dimensions": {
-            "engagement": round(overall_E / max(count, 1), 1),
-            "response_quality": round(overall_R / max(count, 1), 1),
-            "clinical_safety": round(overall_C / max(count, 1), 1),
-            "session_flow": round(overall_S / max(count, 1), 1),
-            "format_variety": round(overall_F / max(count, 1), 1),
-            "velocity": round(overall_V / max(count, 1), 1)
-        },
-        "matrix": matrix
-    }
+    """Conversation Quality Score (CQS) from live DB via quality_metrics.py."""
+    return await compute_admin_quality_summary(db, days=min(days, 30))
 
 @app.get("/api/admin/prerag/report")
 async def admin_prerag_report(current: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
@@ -2518,7 +2512,8 @@ async def admin_routing_matrix(current: dict = Depends(require_admin)):
 
 @app.get("/api/admin/escalation-stats")
 async def admin_escalation_stats(current: dict = Depends(require_admin), db: AsyncSession = Depends(get_db)):
-    total_msgs = (await db.execute(func.count(Message.id))).scalar() or 0
+    # total_msgs = (await db.execute(func.count(Message.id))).scalar() or 0
+    total_msgs = (await db.execute(select(func.count(func.distinct(Message.conversation_id))))).scalar()or 0
     specialist_triggers = (await db.execute(select(func.count(Message.id)).where(Message.role == "assistant", Message.confidence < CONFIDENCE_THRESHOLD, Message.confidence > 0))).scalar() or 0
     human_triggers = (await db.execute(select(func.count(Message.id)).where(Message.role == "assistant", Message.frustration > FRUSTRATION_THRESHOLD))).scalar() or 0
     specialist_pct = round(specialist_triggers / max(total_msgs / 2, 1) * 100, 1)
