@@ -1,17 +1,26 @@
 """PRISM — Application Settings (Pydantic v2)"""
 from functools import lru_cache
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
 import os
 from pathlib import Path
 
+from dotenv import load_dotenv
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from backend.database.connection import database_host_from_url, normalize_database_url
+
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
+ENV_FILE = BASE_DIR / ".env"
+
+# Load .env before Settings() so DATABASE_URL is available at import time
+load_dotenv(ENV_FILE, override=False)
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=os.path.join(BASE_DIR, ".env"),
-        extra="ignore"
+        env_file=str(ENV_FILE),
+        env_file_encoding="utf-8",
+        extra="ignore",
     )
 
     # LLM
@@ -21,8 +30,11 @@ class Settings(BaseSettings):
     llm_provider: str = "anthropic"
     llm_model: str = "claude-sonnet-4-5"
 
-    # Database
-    database_url: str = "postgresql+asyncpg://prism_user:prism_pass@127.0.0.1:5432/prism_db"
+    # Database — must be set via DATABASE_URL in .env (Supabase)
+    database_url: str
+    # Set false only if corporate proxy causes SSL cert errors (development)
+    database_ssl_verify: bool = True
+
     redis_url: str = "redis://127.0.0.1:6379/0"
 
     # Vector store
@@ -61,6 +73,27 @@ class Settings(BaseSettings):
     # Env
     environment: str = "development"
     log_level: str = "INFO"
+
+    @field_validator("database_url")
+    @classmethod
+    def validate_database_url(cls, v: str) -> str:
+        v = (v or "").strip()
+        if not v:
+            raise ValueError(
+                "DATABASE_URL is required. Add it to .env (Supabase connection string). "
+                "Example: postgresql+asyncpg://user:password@db.xxx.supabase.co:5432/postgres"
+            )
+        host = database_host_from_url(v)
+        if host in ("127.0.0.1", "localhost"):
+            raise ValueError(
+                f"DATABASE_URL points to local host ({host}). "
+                "Use your Supabase connection string from Project Settings → Database."
+            )
+        return normalize_database_url(v)
+
+    @property
+    def database_host(self) -> str:
+        return database_host_from_url(self.database_url)
 
     @property
     def origins_list(self):

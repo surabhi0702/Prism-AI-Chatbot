@@ -1249,6 +1249,9 @@ def compute_conversation_quality(
     intent: str,
     format_used: str,
     memory_dict: Dict,
+    current_ragas: Optional[Dict] = None,
+    current_frustration: Optional[int] = None,
+    current_confidence: Optional[float] = None,
 ) -> Dict:
     """
     Computes the Projected Conversation Quality Score.
@@ -1263,6 +1266,11 @@ def compute_conversation_quality(
         if isinstance(msg, dict):
             if msg.get("ragas_scores"): ragas_scores.append(msg["ragas_scores"])
             if msg.get("frustration"): frustration_scores.append(msg["frustration"])
+
+    if current_ragas:
+        ragas_scores.append(current_ragas)
+    if current_frustration is not None:
+        frustration_scores.append(current_frustration)
         
     score = QualityScorer.compute_score(
         history=conversation_history,
@@ -1274,7 +1282,10 @@ def compute_conversation_quality(
         response_count=memory.response_count,
     )
     
-    return {
+    result = {
         "projected_score": score,
-        "recommendation": get_quality_recommendation(score)
+        "recommendation": get_quality_recommendation(score),
     }
+    if current_confidence is not None:
+        result["confidence"] = current_confidence
+    return result

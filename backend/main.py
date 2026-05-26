@@ -57,10 +57,11 @@ from pydantic import BaseModel, EmailStr
 from backend.config.settings import get_settings
 from backend.config.disease_config import AGENTS, DISEASE_DOMAINS, SUBSCRIPTION_TIERS, PRIMARY_AGENTS
 from backend.database.models import (
-    create_tables, get_db, User, Conversation, Message,
+    create_tables, get_db, engine, User, Conversation, Message,
     PatientFeedback, IndexedDocument, LLMCallLog, RAGASMetric,
     SystemAlert, PreRAGResult, ImageUpload, AsyncSession as AsyncSessionFactory
 )
+from backend.database.connection import verify_database_connection
 from backend.middleware.auth import (
     hash_password, verify_password, create_token,
     get_current_user, require_admin,
@@ -211,18 +212,18 @@ async def startup():
     print("PRISM BACKEND STARTUP INITIALIZED")
     print("="*80)
     
-    try:
-        print(f"[STARTUP] Environment: {settings.environment}")
-        print(f"[STARTUP] Database: {settings.database_url.split('@')[-1]}") # Log host only for safety
-        
-        print("[STARTUP] Initializing database tables and migrations...")
-        await create_tables()
-        print("[STARTUP] Database initialized successfully.")
-    except Exception as e:
-        print(f"\n[STARTUP] Database connection failed: {e}")
-        print("Development mode: Continuing without database initialization.")
-        print("Note: Database-dependent endpoints will fail until database is available.")
-        print("To fix: Start PostgreSQL with 'docker-compose up postgres' or set DATABASE_URL for SQLite")
+    print(f"[STARTUP] Environment: {settings.environment}")
+    print(f"[STARTUP] Database host: {settings.database_host}")
+    if not settings.database_ssl_verify:
+        print("[STARTUP] Database SSL verify: OFF (DATABASE_SSL_VERIFY=false)")
+
+    print("[STARTUP] Verifying database connection (SELECT 1)...")
+    await verify_database_connection(engine)
+    print("[STARTUP] Database connection OK.")
+
+    print("[STARTUP] Initializing database tables and migrations...")
+    await create_tables()
+    print("[STARTUP] Database initialized successfully.")
 
     os.makedirs(settings.upload_dir, exist_ok=True)
     
@@ -247,7 +248,13 @@ async def health():
 
 @app.get("/api/health")
 async def api_health():
-    return {"status": "healthy", "timestamp": datetime.utcnow().isoformat(), "agents": len(AGENTS)}
+    return {
+        "status": "healthy",
+        "timestamp": datetime.utcnow().isoformat(),
+        "agents": len(AGENTS),
+        "database_host": settings.database_host,
+        "api_build": "supabase-v2",
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -265,138 +272,81 @@ class LoginRequest(BaseModel):
     password: str
 
 
-DEV_ADMIN_EMAILS = {"admin@prism.ai"}
+@app.post("/api/auth/register")
+async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
+    existing = await db.execute(select(User).where(User.email == req.email))
+    if existing.scalar_one_or_none():
+        raise HTTPException(400, "Email already registered")
 
-
-def _is_db_connection_error(err: Exception) -> bool:
-    msg = str(err).lower()
-    return (
-        "connection" in msg
-        or "10061" in msg
-        or "1225" in msg
-        or "refused" in msg
-        or "connect call failed" in msg
+    all_diseases = ["CA", "DM", "CV", "MH", "RS"]
+    user = User(
+        id=str(uuid.uuid4()),
+        email=req.email,
+        name=req.name,
+        hashed_password=hash_password(req.password),
+        language=req.language,
+        country=req.country,
+        subscription="premium",
+        subscribed_diseases=all_diseases,
+        login_count=1,
+        last_login=datetime.utcnow(),
     )
-
-
-def _dev_auth_response(email: str, name: str = "Dev User") -> dict:
-    """Fallback auth when PostgreSQL is offline — preserve admin role for demo admin."""
-    role = "admin" if email.lower() in DEV_ADMIN_EMAILS else "patient"
-    user_id = str(uuid.uuid4())
+    db.add(user)
+    await db.flush()
     token = create_token({
-        "sub": user_id,
-        "email": email,
-        "role": role,
-        "subscription": "premium",
+        "sub": str(user.id),
+        "email": user.email,
+        "role": str(user.role),
+        "subscription": str(user.subscription),
+    })
+    return {
+        "token": token,
+        "api_build": "supabase-v2",
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "name": user.name,
+            "role": str(user.role),
+            "subscription": str(user.subscription),
+            "subscribed_diseases": user.subscribed_diseases,
+            "language": user.language,
+            "country": user.country,
+        },
+    }
+
+@app.post("/api/auth/token")
+async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
+    res = await db.execute(select(User).where(User.email == req.email))
+    user = res.scalar_one_or_none()
+    if not user or not verify_password(req.password, user.hashed_password):
+        raise HTTPException(401, "Invalid credentials")
+
+    all_diseases = ["CA", "DM", "CV", "MH", "RS"]
+    if user.subscription != "premium" or not user.subscribed_diseases or len(user.subscribed_diseases) < 5:
+        user.subscription = "premium"
+        user.subscribed_diseases = all_diseases
+        await db.flush()
+
+    user.last_login = datetime.utcnow()
+    user.login_count = (user.login_count or 0) + 1
+    token = create_token({
+        "sub": str(user.id),
+        "email": user.email,
+        "role": str(user.role),
+        "subscription": str(user.subscription),
     })
     return {
         "token": token,
         "user": {
-            "id": user_id,
-            "email": email,
-            "name": name if role == "admin" else "Dev User",
-            "role": role,
-            "subscription": "premium",
-            "subscribed_diseases": ["CA", "DM", "CV", "MH", "RS"],
-            "language": "en",
+            "id": user.id,
+            "email": user.email,
+            "name": user.name,
+            "role": str(user.role),
+            "subscription": str(user.subscription),
+            "subscribed_diseases": user.subscribed_diseases,
+            "language": user.language,
         },
-        "warning": "Database unavailable — limited development mode. Start PostgreSQL for full admin data.",
     }
-
-
-@app.post("/api/auth/register")
-async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
-    try:
-        existing = await db.execute(select(User).where(User.email == req.email))
-        if existing.scalar_one_or_none():
-            raise HTTPException(400, "Email already registered")
-        
-        # Auto-subscribe to all diseases and set premium tier
-        all_diseases = ["CA", "DM", "CV", "MH", "RS"]
-        user = User(
-            id=str(uuid.uuid4()), 
-            email=req.email, 
-            name=req.name,
-            hashed_password=hash_password(req.password), 
-            language=req.language,
-            country=req.country,
-            subscription="premium",
-            subscribed_diseases=all_diseases,
-            login_count=1,
-            last_login=datetime.utcnow()
-        )
-        db.add(user)
-        await db.flush()
-        token = create_token({
-            "sub": str(user.id), 
-            "email": user.email, 
-            "role": str(user.role), 
-            "subscription": str(user.subscription)
-        })
-        return {
-            "token": token, 
-            "user": {
-                "id": user.id, 
-                "email": user.email, 
-                "name": user.name, 
-                "role": str(user.role), 
-                "subscription": str(user.subscription), 
-                "subscribed_diseases": user.subscribed_diseases,
-                "language": user.language,
-                "country": user.country
-            }
-        }
-    except Exception as db_err:
-        if _is_db_connection_error(db_err):
-            print(f"[AUTH] Database unavailable, using development token: {db_err}")
-            payload = _dev_auth_response(req.email, req.name)
-            payload["user"]["language"] = req.language
-            payload["user"]["country"] = req.country
-            return payload
-        raise
-
-@app.post("/api/auth/token")
-async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
-    try:
-        res = await db.execute(select(User).where(User.email == req.email))
-        user = res.scalar_one_or_none()
-        if not user or not verify_password(req.password, user.hashed_password):
-            raise HTTPException(401, "Invalid credentials")
-        
-        # Auto-upgrade existing users to all diseases if they don't have them
-        all_diseases = ["CA", "DM", "CV", "MH", "RS"]
-        if user.subscription != "premium" or not user.subscribed_diseases or len(user.subscribed_diseases) < 5:
-            user.subscription = "premium"
-            user.subscribed_diseases = all_diseases
-            await db.flush()
-
-        user.last_login = datetime.utcnow()
-        user.login_count = (user.login_count or 0) + 1
-        token = create_token({
-            "sub": str(user.id), 
-            "email": user.email, 
-            "role": str(user.role), 
-            "subscription": str(user.subscription)
-        })
-        return {
-            "token": token, 
-            "user": {
-                "id": user.id, 
-                "email": user.email, 
-                "name": user.name, 
-                "role": str(user.role), 
-                "subscription": str(user.subscription), 
-                "subscribed_diseases": user.subscribed_diseases, 
-                "language": user.language
-            }
-        }
-    except HTTPException:
-        raise
-    except Exception as db_err:
-        if _is_db_connection_error(db_err):
-            print(f"[AUTH] Database unavailable, allowing development login: {db_err}")
-            return _dev_auth_response(req.email)
-        raise
 
 
 @app.get("/api/auth/me")

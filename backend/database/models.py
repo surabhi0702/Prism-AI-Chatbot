@@ -6,13 +6,17 @@ from sqlalchemy import (
     ForeignKey, JSON, Enum as SAEnum, text
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
-from sqlalchemy.ext.asyncio import AsyncAttrs, create_async_engine, async_sessionmaker
+from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from backend.config.settings import get_settings
+from backend.database.connection import create_database_engine
 
 settings = get_settings()
 
-engine = create_async_engine(settings.database_url, echo=False, pool_size=10, max_overflow=20)
+engine = create_database_engine(
+    settings.database_url,
+    ssl_verify=settings.database_ssl_verify,
+)
 AsyncSession = async_sessionmaker(engine, expire_on_commit=False)
 
 

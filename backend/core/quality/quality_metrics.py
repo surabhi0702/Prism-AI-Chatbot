@@ -149,3 +149,41 @@ async def compute_quality_for_all_patients(db: AsyncSession, days: int = 15) -> 
     # Rank by CQS
     results.sort(key=lambda x: x.get("cqs", 0), reverse=True)
     return results
+
+
+async def compute_admin_quality_summary(db: AsyncSession, days: int = 15) -> Dict[str, Any]:
+    """Aggregate CQS across active patients for the admin quality dashboard."""
+    results = await compute_quality_for_all_patients(db, days=days)
+    if not results:
+        return {"active_patients": 0, "avg_cqs": 0, "avg_stars": 0, "patients": [], "period_days": days}
+
+    avg_cqs = round(sum(r["cqs"] for r in results) / len(results), 1)
+    avg_stars = round(sum(r["predicted_stars"] for r in results) / len(results), 2)
+
+    def avg_dim(key: str) -> float:
+        vals = [r["dimensions"].get(key, {}).get("score", 0) for r in results]
+        return round(sum(vals) / max(len(vals), 1), 1)
+
+    return {
+        "active_patients": len(results),
+        "avg_cqs": avg_cqs,
+        "avg_stars": avg_stars,
+        "period_days": days,
+        "dimensions": {
+            "engagement": avg_dim("engagement"),
+            "response_quality": avg_dim("response_quality"),
+            "clinical_safety": avg_dim("clinical_safety"),
+            "session_flow": avg_dim("session_flow"),
+            "format_variety": avg_dim("format_variety"),
+            "velocity": avg_dim("velocity"),
+        },
+        "patients": [
+            {
+                "user_id": r["user_id"],
+                "cqs": r["cqs"],
+                "predicted_stars": r["predicted_stars"],
+                "sessions": r["sessions"],
+            }
+            for r in results[:20]
+        ],
+    }

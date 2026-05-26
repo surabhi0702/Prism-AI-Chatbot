@@ -52,8 +52,20 @@ def check_env():
     if not env_file.exists():
         print("[WARN] .env not found. Copying from .env.example...")
         import shutil
-        shutil.copy(ROOT / ".env.example", env_file)
-        print("   Edit .env and add your ANTHROPIC_API_KEY before using the chat.")
+        example = ROOT / ".env.example"
+        if example.exists():
+            shutil.copy(example, env_file)
+        print("   Edit .env: set DATABASE_URL (Supabase) and ANTHROPIC_API_KEY.")
+        return
+    text = env_file.read_text(encoding="utf-8")
+    has_db_url = any(
+        ln.strip().startswith("DATABASE_URL=")
+        for ln in text.splitlines()
+        if ln.strip() and not ln.strip().startswith("#")
+    )
+    if not has_db_url:
+        print("[WARN] DATABASE_URL is missing or commented in .env.")
+        print("   Add your Supabase connection string from Project Settings → Database.")
 
 def check_node():
     try:
@@ -92,7 +104,21 @@ def install_frontend():
             print(f"[ERROR] Failed to install frontend dependencies: {e}")
 
 
+def kill_port(port: int = 8000):
+    """Free the backend port so we never hit a stale uvicorn from a previous run."""
+    try:
+        script = ROOT / "scripts" / "kill_port.ps1"
+        if script.exists():
+            subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(script), "-Port", str(port)],
+                cwd=ROOT, check=False,
+            )
+    except Exception as e:
+        print(f"[WARN] Could not free port {port}: {e}")
+
+
 def start_backend():
+    kill_port(8000)
     env = os.environ.copy()
     env["PYTHONPATH"] = str(ROOT)
     proc = subprocess.Popen(
