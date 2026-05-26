@@ -55,3 +55,4 @@ test.pdf
 test.pdf
 *.txt
 !README.md
+!runtime.txt
